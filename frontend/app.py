@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-API_URL = "https://finance-dashboard.onrender.com"
+API_URL = "https://finance-dashboard-api.onrender.com"
 
 
 # ==========================
