@@ -1,5 +1,16 @@
-venv/
+# Python
 __pycache__/
 *.pyc
-stocks.db
+
+# Virtual environment
+venv/
 .env
+
+# Database
+*.db
+
+# Streamlit
+.streamlit/
+
+# IDE
+.vscode/

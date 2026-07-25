@@ -1,82 +1,199 @@
-from fastapi import FastAPI
-from database import SessionLocal, engine, Base
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.orm import Session
+import yfinance as yf
+
+from database import engine, Base, get_db
 from models import Stock
+from schemas import StockResponse
 
-app = FastAPI(title="Finance Dashboard API")
+app = FastAPI(
+    title="Finance Dashboard API",
+    version="1.0.0",
+    description="Stock Market Dashboard API built with FastAPI"
+)
 
+# Create tables
 Base.metadata.create_all(bind=engine)
+
+
+# ==========================
+# HOME
+# ==========================
 
 @app.get("/")
 def home():
-    return {"message": "Finance Dashboard API Running"}
+    return {
+        "message": "Finance Dashboard API Running",
+        "status": "success"
+    }
 
-@app.get("/stocks")
-def get_stocks():
-    db = SessionLocal()
+
+# ==========================
+# GET ALL STOCKS
+# ==========================
+
+@app.get("/stocks", response_model=list[StockResponse])
+def get_stocks(db: Session = Depends(get_db)):
 
     stocks = db.query(Stock).all()
 
-    result = []
+    return stocks
 
-    for stock in stocks:
-        result.append({
-            "ticker": stock.ticker,
-            "company_name": stock.company_name,
-            "price": stock.price,
-            "market_cap": stock.market_cap,
-            "pe_ratio": stock.pe_ratio,
-            "eps": stock.eps
-        })
 
-    return result
-@app.get("/stocks/{ticker}")
-def get_stock(ticker: str):
-    db = SessionLocal()
+# ==========================
+# GET SINGLE STOCK
+# ==========================
 
-    stock = db.query(Stock).filter(Stock.ticker == ticker).first()
+@app.get("/stocks/{ticker}", response_model=StockResponse)
+def get_stock(
+    ticker: str,
+    db: Session = Depends(get_db)
+):
+
+    stock = (
+        db.query(Stock)
+        .filter(Stock.ticker == ticker.upper())
+        .first()
+    )
 
     if stock is None:
-        return {"error": "Stock not found"}
+        raise HTTPException(
+            status_code=404,
+            detail="Stock not found"
+        )
 
-    return {
-        "ticker": stock.ticker,
-        "company_name": stock.company_name,
-        "price": stock.price,
-        "market_cap": stock.market_cap,
-        "pe_ratio": stock.pe_ratio,
-        "eps": stock.eps
-    }
+    return stock
+
+
+# ==========================
+# MARKET SUMMARY
+# ==========================
+
 @app.get("/market-summary")
-def market_summary():
-    db = SessionLocal()
+def market_summary(db: Session = Depends(get_db)):
 
     stocks = db.query(Stock).all()
 
-    if not stocks:
-        return {"message": "No data available"}
+    if len(stocks) == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="No stock data available"
+        )
 
     total_companies = len(stocks)
 
-    average_pe = sum(stock.pe_ratio or 0 for stock in stocks) / total_companies
+    average_pe = round(
+        sum(stock.pe_ratio or 0 for stock in stocks)
+        / total_companies,
+        2
+    )
 
-    highest_market_cap = max(stocks, key=lambda s: s.market_cap or 0)
+    average_eps = round(
+        sum(stock.eps or 0 for stock in stocks)
+        / total_companies,
+        2
+    )
 
-    lowest_price = min(stocks, key=lambda s: s.price or 0)
+    highest_market_cap = max(
+        stocks,
+        key=lambda x: x.market_cap or 0
+    )
+
+    highest_price = max(
+        stocks,
+        key=lambda x: x.price or 0
+    )
+
+    lowest_price = min(
+        stocks,
+        key=lambda x: x.price or 0
+    )
 
     return {
+
         "total_companies": total_companies,
-        "average_pe": round(average_pe, 2),
-        "highest_market_cap": highest_market_cap.company_name,
-        "lowest_price": lowest_price.company_name
+
+        "average_pe": average_pe,
+
+        "average_eps": average_eps,
+
+        "highest_market_cap":
+            highest_market_cap.company_name,
+
+        "highest_market_cap_value":
+            highest_market_cap.market_cap,
+
+        "highest_price":
+            highest_price.company_name,
+
+        "highest_price_value":
+            highest_price.price,
+
+        "lowest_price":
+            lowest_price.company_name,
+
+        "lowest_price_value":
+            lowest_price.price
     }
+
+
+# ==========================
+# HISTORICAL DATA
+# ==========================
+
 @app.get("/history/{ticker}")
 def get_history(ticker: str):
-    import yfinance as yf
 
-    stock = yf.Ticker(ticker)
+    try:
 
-    history = stock.history(period="1y")
+        stock = yf.Ticker(f"{ticker.upper()}.NS")
 
-    history.reset_index(inplace=True)
+        history = stock.history(period="1y")
 
-    return history.to_dict(orient="records")
+        if history.empty:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Historical data not found"
+            )
+
+        history.reset_index(inplace=True)
+
+        history["Date"] = (
+            history["Date"]
+            .dt.strftime("%Y-%m-%d")
+        )
+
+        return history[
+            [
+                "Date",
+                "Open",
+                "High",
+                "Low",
+                "Close",
+                "Volume"
+            ]
+        ].to_dict(orient="records")
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+# ==========================
+# HEALTH CHECK
+# ==========================
+
+@app.get("/health")
+def health():
+
+    return {
+
+        "status": "healthy",
+
+        "service": "Finance Dashboard API"
+
+    }
